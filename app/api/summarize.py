@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -19,7 +21,7 @@ async def summarize_article(
     request: SummarizeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Article).where(Article.id == request.article_id)
+    stmt = select(Article).where(Article.id == UUID(request.article_id))
     result = await db.execute(stmt)
     article = result.scalar_one_or_none()
 

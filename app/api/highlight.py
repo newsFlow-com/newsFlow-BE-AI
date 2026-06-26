@@ -30,20 +30,20 @@ async def _fetch_top_articles(
     articles = result.scalars().all()
 
     ranked = sorted(
-        articles,
-        key=lambda a: score_article(a.view_count, 0, a.collected_at),
+        [(score_article(a.view_count, 0, a.collected_at), a) for a in articles],
+        key=lambda x: x[0],
         reverse=True,
     )[:top_n]
 
     output = []
-    for a in ranked:
+    for score, a in ranked:
         item = {
             "article_id": str(a.id),
             "title": a.title,
             "summary": a.summary,
             "original_url": a.original_url,
             "published_at": a.published_at.isoformat() if a.published_at else None,
-            "score": score_article(a.view_count, 0, a.collected_at),
+            "score": score,
             "ai_summary": None,
         }
         if with_summary:

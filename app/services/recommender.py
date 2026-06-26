@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,10 @@ async def get_recommendations(
     user_id: str,
     size: int = 10,
 ) -> list[dict]:
+    uid = UUID(user_id)
+
     # 관심 카테고리 조회
-    stmt = select(UserCategory).where(UserCategory.user_id == user_id)
+    stmt = select(UserCategory).where(UserCategory.user_id == uid)
     result = await db.execute(stmt)
     user_categories = result.scalars().all()
 
@@ -23,7 +26,7 @@ async def get_recommendations(
     category_ids = [uc.category_id for uc in user_categories]
 
     # 북마크 기사 ID 조회
-    bm_stmt = select(Bookmark.article_id).where(Bookmark.user_id == user_id)
+    bm_stmt = select(Bookmark.article_id).where(Bookmark.user_id == uid)
     bm_result = await db.execute(bm_stmt)
     bookmarked_ids = {row[0] for row in bm_result}
 
@@ -47,12 +50,12 @@ async def get_recommendations(
     articles = result.scalars().all()
 
     scored = sorted(
-        articles,
-        key=lambda a: score_article(a.view_count, 0, a.collected_at),
+        [(score_article(a.view_count, 0, a.collected_at), a) for a in articles],
+        key=lambda x: x[0],
         reverse=True,
     )
 
-    return [_to_dict(score_article(a.view_count, 0, a.collected_at), a) for a in scored[:size]]
+    return [_to_dict(score, a) for score, a in scored[:size]]
 
 
 async def _get_recent_articles(db: AsyncSession, size: int) -> list[dict]:
