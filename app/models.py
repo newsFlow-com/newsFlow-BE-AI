@@ -58,3 +58,21 @@ class Bookmark(Base):
     id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(UUID(as_uuid=True))
     article_id = Column(UUID(as_uuid=True), ForeignKey("articles.id"))
+
+
+class ArticleView(Base):
+    __tablename__ = "article_views"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True))
+    article_id = Column(UUID(as_uuid=True), ForeignKey("articles.id"))
+    viewed_at = Column(DateTime(timezone=True))
+
+
+class ArticleKeyword(Base):
+    __tablename__ = "article_keywords"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    article_id = Column(UUID(as_uuid=True), ForeignKey("articles.id"))
+    keyword_id = Column(UUID(as_uuid=True))
+    relevance_score = Column(Float, default=0.0)
