@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import highlight, recommend, summarize
+from app.api import highlight, recommend, sentiment, summarize
 
 app = FastAPI(
     title="NewsFlow AI Server",
@@ -19,6 +19,7 @@ app.add_middleware(
 
 app.include_router(highlight.router)
 app.include_router(recommend.router)
+app.include_router(sentiment.router)
 app.include_router(summarize.router)
 
 
