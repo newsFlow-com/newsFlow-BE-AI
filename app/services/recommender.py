@@ -14,6 +14,8 @@ VIEW_HISTORY_DAYS = 30
 CANDIDATE_DAYS = 7
 # 카테고리 가중치 — 최근 본 기사와 같은 카테고리일 때 점수에 추가
 VIEW_CATEGORY_BOOST = 15.0
+# 키워드 가중치 — 최근 본 기사와 같은 키워드가 있을 때 점수에 추가
+VIEW_KEYWORD_BOOST = 8.0
 
 
 async def get_recommendations(
@@ -29,7 +31,7 @@ async def get_recommendations(
     user_categories = uc_result.scalars().all()
 
     # 이미 본 기사 ID (최근 VIEW_HISTORY_DAYS일)
-    viewed_ids, view_category_weights = await _get_view_history(db, uid)
+    viewed_ids, view_category_weights, view_keyword_weights = await _get_view_history(db, uid)
 
     # 북마크 기사 ID
     bm_stmt = select(Bookmark.article_id).where(Bookmark.user_id == uid)
@@ -68,8 +70,9 @@ async def get_recommendations(
     # 기사별 키워드 수 일괄 조회
     keyword_counts = await _get_keyword_counts(db, [a.id for a in articles])
 
-    # 기사별 카테고리 조회 (가중치 계산용)
+    # 기사별 카테고리/키워드 조회 (가중치 계산용)
     article_category_map = await _get_article_categories(db, [a.id for a in articles])
+    article_keyword_map = await _get_article_keywords(db, [a.id for a in articles])
 
     scored = []
     for article in articles:
@@ -80,12 +83,19 @@ async def get_recommendations(
         )
         # 최근 열람 카테고리와 겹치는 경우 부스트
         article_cats = article_category_map.get(article.id, set())
-        boost = sum(
+        cat_boost = sum(
             VIEW_CATEGORY_BOOST * weight
             for cat_id, weight in view_category_weights.items()
             if cat_id in article_cats
         )
-        scored.append((base_score + boost, article))
+        # 최근 열람 키워드와 겹치는 경우 부스트
+        article_kws = article_keyword_map.get(article.id, set())
+        kw_boost = sum(
+            VIEW_KEYWORD_BOOST * weight
+            for kw_id, weight in view_keyword_weights.items()
+            if kw_id in article_kws
+        )
+        scored.append((base_score + cat_boost + kw_boost, article))
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [_to_dict(score, a) for score, a in scored[:size]]
@@ -94,12 +104,13 @@ async def get_recommendations(
 async def _get_view_history(
     db: AsyncSession,
     uid: UUID,
-) -> tuple[set, dict]:
+) -> tuple[set, dict, dict]:
     """최근 VIEW_HISTORY_DAYS일 열람 이력 반환.
 
     Returns:
         viewed_ids: 본 기사 ID 집합
-        view_category_weights: {category_id: 정규화된 가중치} — 많이 본 카테고리일수록 높음
+        view_category_weights: {category_id: 정규화된 가중치}
+        view_keyword_weights: {keyword_id: 정규화된 가중치}
     """
     since = datetime.now(timezone.utc) - timedelta(days=VIEW_HISTORY_DAYS)
     view_stmt = (
@@ -111,7 +122,7 @@ async def _get_view_history(
     views = view_result.scalars().all()
 
     if not views:
-        return set(), {}
+        return set(), {}, {}
 
     viewed_ids = {v.article_id for v in views}
     viewed_article_ids = list(viewed_ids)
@@ -123,20 +134,34 @@ async def _get_view_history(
     cat_result = await db.execute(cat_stmt)
     article_cats = cat_result.scalars().all()
 
-    # 카테고리별 열람 빈도 집계
     category_counter: Counter = Counter()
     for ac in article_cats:
         category_counter[ac.category_id] += 1
 
-    if not category_counter:
-        return viewed_ids, {}
+    if category_counter:
+        max_count = max(category_counter.values())
+        view_category_weights = {c: n / max_count for c, n in category_counter.items()}
+    else:
+        view_category_weights = {}
 
-    max_count = max(category_counter.values())
-    view_category_weights = {
-        cat_id: count / max_count
-        for cat_id, count in category_counter.items()
-    }
-    return viewed_ids, view_category_weights
+    # 본 기사들의 키워드 조회
+    kw_stmt = select(ArticleKeyword).where(
+        ArticleKeyword.article_id.in_(viewed_article_ids)
+    )
+    kw_result = await db.execute(kw_stmt)
+    article_kws = kw_result.scalars().all()
+
+    keyword_counter: Counter = Counter()
+    for ak in article_kws:
+        keyword_counter[ak.keyword_id] += 1
+
+    if keyword_counter:
+        max_kw = max(keyword_counter.values())
+        view_keyword_weights = {k: n / max_kw for k, n in keyword_counter.items()}
+    else:
+        view_keyword_weights = {}
+
+    return viewed_ids, view_category_weights, view_keyword_weights
 
 
 async def _get_keyword_counts(db: AsyncSession, article_ids: list) -> dict:
@@ -162,6 +187,18 @@ async def _get_article_categories(db: AsyncSession, article_ids: list) -> dict:
     for ac in result.scalars().all():
         category_map.setdefault(ac.article_id, set()).add(ac.category_id)
     return category_map
+
+
+async def _get_article_keywords(db: AsyncSession, article_ids: list) -> dict:
+    """기사별 키워드 ID 집합 반환."""
+    if not article_ids:
+        return {}
+    stmt = select(ArticleKeyword).where(ArticleKeyword.article_id.in_(article_ids))
+    result = await db.execute(stmt)
+    keyword_map: dict = {}
+    for ak in result.scalars().all():
+        keyword_map.setdefault(ak.article_id, set()).add(ak.keyword_id)
+    return keyword_map
 
 
 async def _get_recent_articles(
